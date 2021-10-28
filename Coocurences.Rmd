@@ -1,0 +1,170 @@
+## Objectif
+
+Le but de ce programme est de créer un heatmap similaire à la figure 3 dans l'article https://doi.org/10.1038/s41598-019-53975-9 pour évaluer les relations entre les Bactéries et les eucaryotes, ainsi que les relations au sein de ces domaines. 
+
+Télécharger les packages nécessaires.
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(phyloseq)
+library(magrittr)
+```
+
+On choisit de ne conserver que les ASV présent dans au moins 3 sites afin de limiter les corrélation liée a la présence d'un même taxons uniquement dans 1 site.
+```{r}
+Apath="~/Desktop/iCAMP.uni.rar/Bac" ## Y
+Bpath="~/Desktop/iCAMP.uni.rar/Euk/" ## X
+
+
+A_ASV = read.csv(file.path(Apath,"ASV.uni.rar31.csv"), header = TRUE, row.names = 1)
+A_tax = read.csv(file.path(Apath,"ASV.tax.csv"), header = TRUE, row.names = 1)
+B_ASV = read.csv(file.path(Bpath,"ASV.uni.rar31.csv"), header = TRUE, row.names = 1)
+B_tax = read.csv(file.path(Bpath,"ASV.tax.csv"), header = TRUE, row.names = 1)
+
+#Transformer en phyloseq
+A_data = phyloseq(otu_table(A_ASV, taxa_are_rows = TRUE), tax_table(as.matrix(A_tax)))
+B_data = phyloseq(otu_table(B_ASV, taxa_are_rows = TRUE), tax_table(as.matrix(B_tax)))
+
+A_data = filter_taxa(A_data, function(x) sum(x!=0) >= 3, TRUE)
+B_data = filter_taxa(B_data, function(x) sum(x!=0) >= 3, TRUE)
+
+A_data  = transform_sample_counts(A_data, function(x) x / sum(x) )
+B_data  = transform_sample_counts(B_data, function(x) x / sum(x) )
+
+taxa_names(A_data) <- paste0("ASV", seq(ntaxa(A_data)))
+taxa_names(B_data) <- paste0("ASV", seq(ntaxa(B_data)))
+
+A <- data.frame(as.data.frame(otu_table(A_data)),tax_table(A_data))
+B <- data.frame(as.data.frame(otu_table(B_data)),tax_table(B_data))
+
+rownames(A) <- paste(A$genus, rownames(A))
+rownames(A) <- str_remove(rownames(A),"unclassified_")
+rownames(B) <- paste(B$genus, rownames(B))
+rownames(B) <- str_remove(rownames(B),"unclassified_")
+
+
+A <- A[,1:(length(A)-6)]
+B <- B[,1:(length(B)-6)]
+
+#Les bactéries et eucaryotes les plus abondants seront calculés en additionnant les abondances relative des ASV dans chacun des puits. Les 15 plus abondants seront retenus. La dernière colone qui représente l'abondance relative cumulative est enlevée. 
+
+A  = cbind(A, rowSums(A))
+B = cbind(B, rowSums(B))
+
+#Ordonner les ASV selon leur abondance relative
+A  = A[order(A[,ncol(A)], decreasing = TRUE),]
+B = B[order(B[,ncol(B)], decreasing = TRUE),]
+```
+Attention a ajuster la p-value for multiple testing!! BH method selon mackenzie et al
+
+```{r}
+#fusionner les deux matrices
+AB = bind_rows(as.data.frame(A[, -ncol(A)]), as.data.frame(B[, -ncol(B)]))
+
+#Matrice de corrélation de la relation entre bactéries et eucaryotes
+AB_cor = Hmisc::rcorr(as.matrix(t(AB)), type = "spearman")
+
+p <- as.data.frame(AB_cor$P[(nrow(A)+1):(nrow(A)+nrow(B)),1:nrow(A)])
+
+# Ajuster p value for multiple testing
+p2 <- p %>%
+     as.matrix %>% as.vector %>%
+     p.adjust(method='BH') %>%
+     matrix(ncol=ncol(p)) %>% as.data.frame()
+row.names(p2) <- row.names(p)
+colnames(p2) <- colnames(p)
+p <- p2
+
+for(i in 1:100){
+for (i in 1:15) {
+  pmin <- min(p2[1:15,i])
+  if(pmin<0.05){}
+  else{ p2 <- p2[,-i] }
+  
+  pmin2 <- min(p2[i,1:15])
+  if(pmin2<0.05){}
+  else{ p2 <- p2[-i,] }
+}}
+
+
+pn <- p2[1:15,1:15]
+r <- AB_cor$r[(nrow(A)+1):(nrow(A)+nrow(B)),1:nrow(A)]
+r2 <- r[rownames(r) %in% rownames(pn), ]
+r2 <- r2[,colnames(r2) %in% colnames(pn) ]
+
+AB_p <- reshape2::melt(pn)
+AB_r <- reshape2::melt(r2)
+AB_r$p <- AB_p$value
+```
+
+Mesure de valeurs illustrant l'importance des corrélations entre  les 2 domaines
+```{r}
+Apath
+Bpath
+"Part des corrélations significatives:"
+sum(apply(p,1,function(x) sum(0.05 > x)))/(ncol(p)*nrow(p))
+
+r3 <- r
+for (j in 1:ncol(p)) {
+  ru <- r[,j]
+  pu <- p[,j]
+for(i in 1: nrow(p)){
+  if(pu[i]>0.05){ ru[i] <- NA}
+  else{}}
+  r[,j] <- ru
+  p[,j] <- pu}
+
+"Force moyenne des corrélation significatives:"
+mean(r,na.rm = T)
+
+for (j in 1:ncol(p)) {
+  ru <- r3[,j]
+  pu <- p[,j]
+for(i in 1: nrow(p)){
+  if(pu[i]<0.05){ ru[i] <- NA}
+  else{}}
+  r3[,j] <- ru
+  p[,j] <- pu}
+
+rhist <- as.data.frame(c(na.omit(na.omit(as.vector(r))),na.omit(as.vector(r3))))
+rhist$cat <- "sig"
+rhist$cat[(length(na.omit(as.vector(r)))+1):length((as.vector(r)))] <- "non_sig"
+names(rhist)[1] <- "value"
+```
+
+Visualiser les corrélations
+
+```{r}
+Gheatmap <- ggplot(AB_r, aes(Var1, Var2, fill= value)) +
+  geom_tile()+
+  geom_text(aes(label = paste(cut(p, breaks = c(-Inf, 0.05, Inf), labels =     c( "*", " ")))), cex=8)+
+  scale_fill_distiller(palette = "RdBu",limits = c(-1,1),
+                       guide = guide_colourbar(nbin=100, draw.ulim = FALSE, draw.llim = FALSE, barheight = 15))+
+  theme_minimal(base_size = 16) +
+  scale_x_discrete(position = "top") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0, hjust=0, size = 13),
+        axis.title.y = element_text(size = 17),
+        axis.title.x = element_text(size = 17),
+        axis.text.y=element_text(size = 13),
+        legend.title = element_blank(),
+        axis.ticks.x = element_blank(), 
+        axis.ticks.y = element_blank(),
+        panel.grid.major= element_blank(),
+        panel.grid.minor = element_blank())+
+        theme(legend.position = "none")+
+        coord_fixed()+
+        xlab("Archaea")+ ylab("Bacteria")
+Gheatmap
+
+# Histogramme de la répartition des corrélation illustrée par la heatmap
+Ghist <- ggplot(rhist, aes(x=value,fill=cat, color=cat)) +
+  geom_histogram( position = "dodge", alpha=0.5)+
+  scale_y_continuous(breaks=c(0,1,10,100,1000,10000,1E6), trans="log1p")+
+scale_fill_manual(values = c("#D6604D","#4393C3"))+
+  scale_color_manual(values = c("#D6604D","#4393C3"))+
+  xlab("Adjusted spearman correlation coeficient")+ ylab("Frequency")+
+  ggtitle("Bacteria and Archaea")+
+theme_minimal()+theme(legend.title= element_blank())
+Ghist
+```
