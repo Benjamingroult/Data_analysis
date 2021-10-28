@@ -1,0 +1,76 @@
+---
+title: "Rarefaction"
+output: html_document
+---
+```{r}
+library(phyloseq)
+
+path <- "~/Desktop/iCAMP.uni.rar/Bac/"
+comm <- read.csv(file.path(path,"ASV.csv"), row.names = 1, header = TRUE)
+data <- phyloseq(otu_table(comm, taxa_are_rows = T))
+data = filter_taxa(data, function(x) sum(x) > 15, TRUE) #On en profite pour retirer les ASV présentant une abondance trop faible
+sort(colSums(as.data.frame(otu_table(data)))) # Observer le nombre de séquence dans chaque échantillons
+
+x <- 5397 # nombre de séquences choisie pour la raréfaction
+
+set.seed(123)
+data <- rarefy_even_depth(data,x)
+commrar <- as.data.frame(otu_table(data))
+#write.csv(commrar, file.path(path,"ASV.rar.csv"))
+```
+
+Afin de vérifier la validité du nombre de séquence choisit pour la raréfaction on réalise une extrapolation de la richesse en espèces. Ceci va permettre d'observer des courbes de raréfaction et d'éviter une raréfaction trop faible entrainnant une perte de richesse qui dénaturerait la diversité de l'échantillon de départ.
+```{r}
+library(iNEXT)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(vegan)
+path <- "~/Desktop/iCAMP.uni.rar/Bac/"
+commrar <- read.csv(file.path(path,"ASV.rar.csv"), row.names = 1, header = TRUE)
+comm <- read.csv(file.path(path,"ASV.csv"), row.names = 1, header = TRUE)
+
+# Objet permettant le calcul de l'extrapolation et des courbes de raréfaction
+i <- iNEXT(comm, q=0, datatype="abundance", size=NULL, endpoint=NULL, knots=80, se=TRUE, conf=0.95, nboot=50)
+fr <- do.call(rbind.data.frame, i$iNextEst)
+fr <- rownames_to_column(fr)
+fr$rowname <- str_replace(fr$rowname,"\\..*","")
+fr <- fr[fr$method!= "observed",]
+
+# Corrélation entre la diversitée de Shannon des donnée extrapolée et raréfiée
+dShannon <- ChaoShannon(comm)
+dShannon$rar <- diversity(t(commrar))
+
+# Corrélation entre la 'species richness' des donnée extrapolée et raréfiée
+Sr <- ChaoRichness(comm)
+Sr$rar <- ChaoRichness(commrar)$Observed
+```
+
+```{r}
+GdShan <- ggplot(dShannon,aes(x=Estimator, y=rar))+
+  stat_cor(method = "spearman", digits = 3) +
+  geom_point()+
+  theme_minimal()+xlab("Extrapolated Shannon diversity")+ylab("Rarefied shannon diversity")+
+  geom_smooth(method = "lm", se = F, color = "#D6604D")+
+  geom_abline(intercept = 0, slope = 1 , lty=2)+ ggtitle("Shannon")
+GdShan
+
+GSr <- ggplot(Sr,aes(x=Estimator, y=rar))+
+  stat_cor(method = "spearman", digits = 3) +
+  geom_point()+
+  theme_minimal()+xlab("Extrapolated spiecies richness")+ylab("Rarefied spiecies richness")+
+  geom_smooth(method = "lm", se = F, color = "#D6604D")+
+  geom_abline(intercept = 0, slope = 1 , lty=2)+ ggtitle("Species richness")
+GSr
+
+GrarCurves<- ggplot(fr, aes(y=qD, x=m, group=rowname, colour=method)) + 
+  geom_line()+
+  theme_minimal()+
+  scale_color_manual(values=c("#4393C3","Black"))+
+  ylab("Species richness")+ xlab("Sequences number")+
+  coord_cartesian(xlim=c(0, 50000))+ ## permet de ne pas suprimer les points en dehors des limites
+  geom_vline(xintercept=x, linetype="dashed", color = "#D6604D")+ ## Ajouter la 
+  theme(legend.title= element_blank())+ggtitle("Rarefaction curves")
+GrarCurves
+```
+
