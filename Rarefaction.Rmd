@@ -2,6 +2,11 @@
 title: "Rarefaction"
 output: html_document
 ---
+
+Rarefaction is a method that adjusts for differences in library sizes across samples to aid comparisons of alpha diversity. Rarefaction involves selecting a specified number of samples that is equal to or less than the number of samples in the smallest sample, and then randomly discarding reads from larger samples until the number of remaining samples is equal to this threshold. Based on thesesubsamples of equal size, diversity metrics can be calculated that can contrast ecosystems “fairly,” independent of differences in sample sizes. (DOI=10.3389/fmicb.2019.02407)
+
+Cette méthode permet de comparer la diversité alpha de plusieurs échantillons cette méthode permet de comparer la diversitée de pluseurs échantillons n'ayant pas le même nombre de séquences. Utilisée pour des annalyses multivariée (dbRDA) ou comparaison groupée (Permanova)...
+
 ```{r}
 library(phyloseq)
 
