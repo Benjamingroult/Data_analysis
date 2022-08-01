@@ -1,0 +1,163 @@
+# Transformation chimie
+
+```{r,warning=FALSE,message=FALSE}
+library(ggplot2)
+library(ggfortify)
+library(tidyverse)
+library(vegan)
+library(corrplot)
+library(caret)
+
+path <- "/Users/benjamin/Desktop/Emilien/"
+
+chimie <- read.table(file.path(path,"chimie.csv"), row.names = 1, sep = ",", dec = ".", header = TRUE)
+row.names(chimie)<-paste0("EM_",row.names(chimie))
+
+# on selectione uniquement les variables quantitatives
+chimie <- chimie%>%dplyr::select(z_max, z_avg, area,z_pho, z_thermo,t_epi,t_hypo,do_pho,do_epi,do_hypo,zoo,ccl,chla,n,p,doc,a440,wtr,f)
+```
+
+Les données présentant des NA ne peuvent pas étre utilisée pour les annalyses multivariées de types RDA. On va donc les supstituer. Quatres échantillon présentent un NA pour la `z_thermo`, cette valeur étant le résulat de l'absence de stratification du lac j'ai choisit de la remplacer par 0.
+
+Les données associé a l'échantillon EM_8 présente un manque pour le `wtr`,ce site est donc soit retiré, soit la valeur est remplacé par la médiane de la variable.
+
+```{r}
+chimie$z_thermo[is.na(chimie$z_thermo)] <- 0 # Transformer Na en 0
+chimie$wtr[is.na(chimie$wtr)] <- median(chimie$wtr, na.rm = T)
+```
+
+
+## Observation de la distribution des données de chimie
+
+Variables explicatives, les données mesurées dans l'eau des lacs présentes différentes distribution. On va donc transformer les données pour obtenir des distributions proche de la distribution normale, cela permettras la réalisation de tests paramétriques. Pour choisir le type de transforamtion à éffectuer on observe la distribution des valeurs à l'aide d'histogramme.
+
+```{r echo=FALSE}
+skewn <- as.data.frame(timeDate::skewness(chimie))
+skewn$key <- row.names(skewn)
+
+ggplot(gather(chimie), aes(value)) + 
+  geom_histogram(aes(y=..density..),fill="#D1EBE1",bins = 20, position="dodge",color="#D1EBE1",alpha=0.5) + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  geom_density(color="#004E2F") +
+  geom_text(data=skewn, aes(x=Inf,y=Inf,label=round(`timeDate::skewness(chimie)`,2)),hjust=1.5, vjust=1.5, fontface='bold', size=3)+
+  facet_wrap(~key, scales = 'free')
+```  
+  
+**La transformation se fait indépendamment sur chacune des variables** et permet de réduire l'effet des valeurs aberrantes qui peuvent fortement influencer les résultats, et créer des corrélations.
+
+REF:https://sites.google.com/site/mb3gustame/reference/transformations
+
+## BOX COX transformation
+On choisit d'utiliser la transformation BOX-COX, celle si annalyse chaque variable indépendament et définit définit un indice (lambda) qui, en fonction de sa valeur déterminera la transformation à appliquer. (log, exponnetiel..)  
+
+Les valeurs de skewness négatives indiques une distribution left skewed et et les valeurs positives, une distribtuion right skewd
+
+- skewness > |1|: dissymétrie importante -> transformation log ou 1/log 
+- skewness > |0.5| et < |1|:  dissymétrie modérée -> transformation racine ou 1/racine
+- skewness < |0.5|: symétrie approximative -> pas ou peu de transformation
+
+```{r}
+# On peut vérifier le alpha appliqué a chaque variable
+library(MASS)
+(trans <- BoxCoxTrans(chimie$t_epi))
+```
+
+On peut appliquer Box Cox directement sur toutes les variables. Cependant il faut préalablement ajouter une constante aux variables comprenant des 0.
+```{r}
+chimie.tr <- chimie
+chimie.tr$z_thermo <- chimie.tr$z_thermo+1 #On ajoute 1 à toute les valeurs si des 0 sont compris
+
+#chimie.tr %>%mutate_at(vars(,b,c), funs( BoxCoxTrans(.) %>% predict(.))) ## Choix des variables
+chimie.tr <- chimie.tr %>% mutate_all(funs( BoxCoxTrans(.) %>% predict(.)))
+```
+
+On vérifie la distribution des données transformée
+```{r}
+skewn <- as.data.frame(timeDate::skewness(chimie.tr))
+skewn$key <- row.names(skewn)
+ggplot(gather(chimie.tr), aes(value)) + 
+  geom_histogram(aes(y=..density..),fill="#D1EBE1",bins = 20, position="dodge",color="#D1EBE1",alpha=0.5) + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+  panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  geom_density(color="#004E2F") +
+  geom_text(data=skewn, aes(x=Inf,y=Inf,label=round(`timeDate::skewness(chimie.tr)`,2)),hjust=1.5, vjust=1.5, fontface='bold', size=3)+
+  facet_wrap(~key, scales = 'free')
+```
+
+## Colinéaritée
+
+On identifie et sépare les variables corrélée
+```{r}
+corrplot(cor(chimie.tr))
+#PerformanceAnalytics::chart.Correlation(chimie.tr, histogram=TRUE, pch="+")
+
+## cutoff = 0.7 généralement, on vérifie ensuite si le VIF est trop fort on peut diminuer le cutoff
+indexesToDrop <- findCorrelation(cor(chimie.tr), cutoff = 0.7)
+chimie.non.cor<-chimie.tr[,-indexesToDrop]
+chimie.cor <- chimie.tr[,indexesToDrop]
+
+corrplot(cor(chimie.cor))
+corrplot(cor(chimie.non.cor))
+```
+On vérifie que les variables colinéaire peuvent logiquement étre regrouppée entre elles.
+
+On réalise une PCA avec les variables corrélée et on utilise les scores du 1er axes pour remplacer les variables dans la matrice explicative.
+
+```{r}
+pca<-prcomp(chimie.cor)
+
+# Quelles variable contribue le plus a la différence dans la PCA
+var <- factoextra::get_pca_var(pca)
+head(var$contrib)
+factoextra::fviz_pca_var(pca, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+
+PCcor<-as.data.frame(pca$x)
+PCcor <- setNames(PCcor$PC1, row.names(PCcor)) #créer un vecteur avec le nom des sites
+
+# merge PC1 corr et chimie
+chimie<-chimie.non.cor%>%merge(PCcor, by="row.names")%>% column_to_rownames("Row.names")
+names(chimie)[names(chimie) == 'y'] <- 'PCcor'
+
+```
+On observe que le 1er axe de la PCA explique une trés grande proportion de la variance. On peut donc logiquement remplacer les valeurs colinéaire par cet axe.
+
+## Standardisation des données de chimie au z-score
+
+Cette standardisation donne a toutes les variables une moyenne de 0 et un écart type de 1 ce qui permet d'analyser ensembles des données présentant des unités différentes  
+
+```{r, echo=TRUE}
+chimie <- as.data.frame(scale(chimie, scale = TRUE, center = TRUE))
+#write.table(chimie,file.path(path,"chimie.box.csv"))
+```
+
+## PCA 
+
+PCA des données de chimie transformées afin d'observer l'hétérogénéité des puits en terme de composition de l'eau.
+```{r}
+
+PCA <- prcomp(chimie)
+
+#chimie<- chimie%>%merge(loc, by="row.names", all.x = TRUE)%>%column_to_rownames("Row.names")
+# Extract PC axes for plotting
+PCAvalues <- data.frame(PCA$x)
+
+# Extract loadings of the variables
+PCAloadings <- data.frame(Variables = rownames(PCA$rotation), PCA$rotation)
+
+# Plot PCA avec ggplot!
+p <- ggplot(PCAvalues, aes(x = PC1, y = PC2)) +
+  geom_segment(data = PCAloadings, aes(x = 0, y = 0, xend = (PC1*5),
+     yend = (PC2*5)), arrow = arrow(length = unit(1/2, "picas")),
+     color = "black") +
+  geom_point(size = 3, pch= 20, colour ="black") +
+  geom_point(size = 3.5, pch= 20) +
+  scale_color_brewer(palette="Set3")+
+  annotate("text", x = (PCAloadings$PC1*5.5 ), y = (PCAloadings$PC2*5.5),
+     label = PCAloadings$Variables, size=3) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(),strip.text.y = element_text(angle=0))  
+p
+```
+
+REF: [préparation de donnée avant annalyses](https://www.davidzeleny.net/anadat-r/doku.php/en:data_preparation#img_stand-hell)
