@@ -1,0 +1,231 @@
+
+#Process by phylum
+
+```{r}
+path <- "~/Desktop/Trimdata/Bac/iCAMPout/"
+load(file.path(path,"T1.résumé.rda"))
+```
+
+Histogramme de l'abondance relative des phylums
+
+```{r}
+library(tidyverse)
+require(dplyr)
+
+binphy <- aggregate(TaxonRelativeAbundance ~ phylum + Bin, data = i$Class.Bin, FUN = sum)
+binphy <- binphy %>% group_by(Bin) %>% mutate(BinRelAb = (TaxonRelativeAbundance/sum(TaxonRelativeAbundance))) #La part de chaque phylum dans le bin
+
+BRPtk <- i$BRPtk
+row.names(BRPtk) <- BRPtk$Process
+b <- t(as.data.frame(BRPtk))
+rownames(b) = rownames(b)%>%str_replace("b", "B")
+
+binphy <- merge(binphy,b, by.x="Bin", by.y = "row.names", all.x = TRUE)
+binphy[,5:9] <- as.numeric(unlist(binphy[,5:9]))
+
+binphy <- binphy %>% mutate(HeS = HeS * BinRelAb,
+                            HoS = HoS * BinRelAb,
+                            DL = DL * BinRelAb,
+                            HD = HD * BinRelAb,
+                            DR = DR * BinRelAb)
+
+
+binphy <- aggregate(. ~ phylum, data = binphy[,2:9], FUN = sum)
+binphy <- binphy%>%dplyr::rename(`Abondance relative` = TaxonRelativeAbundance)
+
+## Rassembler les phylums les moins abondants "Autres"
+binphy <- binphy[order(-binphy$`Abondance relative`),]
+binphy <- bind_rows(binphy[1:10,],colSums(binphy[-c(1:10),-1]))
+binphy$phylum[11] <- "Others"
+
+binphy_long <- reshape2::melt(binphy[,-(3)], id.var="phylum")
+
+## Changer la palette de couleur
+library(ggsci)
+library(scales)
+library(RColorBrewer)
+
+#palette <- pal_npg("nrc",1)(7)
+#palette <- palette(c(palette ,"#4DAF4A" ,"#A6CEE3" ,"#B2DF8A", "#FDBF6F" ,"#B3B3B3"))
+#show_col(palette)
+
+library(reshape2)
+binphy <- binphy %>% mutate(HeS = HeS / rowSums(.[4:8]),
+                            HoS = HoS / rowSums(.[4:8]),
+                            DL = DL / rowSums(.[4:8]),
+                            HD = HD / rowSums(.[4:8]),
+                            DR = DR / rowSums(.[4:8]))
+
+binphy_l<- reshape2::melt(binphy[,-(3)],id.vars = c("phylum","Abondance relative"))
+
+binphy_l$variable <- factor(binphy_l$variable, levels = c("DR","HD","DL","HoS","HeS"))
+```
+
+```{r}
+b <-binphy_l[binphy_l$variable == "HoS",]
+b <- b[-11,]
+b2 <- binphy_l[binphy_l$variable == "HeS",]
+b2 <- b[-11,]
+mean(b$value)+mean(b2$value)
+b2 <- binphy_l[binphy_l$variable == "DR",]
+b2 <- b2[-11,]
+mean(b2$value)
+max(b2$value)/min(b2$value)
+```
+
+```{r}
+Phyarc <- ggplot(binphy_l, aes(x=reorder(phylum,-`Abondance relative`), y = value, fill=variable)) +
+  geom_bar(position = "stack", stat = "identity")+
+  #scale_fill_brewer(palette = "Set3") +
+  scale_fill_manual(values=c("#CECECE","#DC0000FF","#F39B7FFF","#00A087FF","#91D1C2FF"))+
+  theme_bw() +
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("")+
+  xlab("")+
+  ggtitle("Archaea")+
+  theme_minimal(base_size = 16) +
+  theme (axis.ticks.x = element_blank(),axis.text.x = element_text(angle = 50, vjust = 1, hjust=1), panel.grid.major.x = element_blank())+ 
+  guides(fill=FALSE)
+  #guides(fill=guide_legend(title="Ecological processes"))
+
+```
+```{r}
+Phybac <- ggplot(binphy_l, aes(x=reorder(phylum,-`Abondance relative`), y = value, fill=variable)) +
+  geom_bar(position = "stack", stat = "identity")+
+  #scale_fill_brewer(palette = "Set3") +
+  scale_fill_manual(values=c("#CECECE","#DC0000FF","#F39B7FFF","#00A087FF","#91D1C2FF"))+
+  theme_bw() +
+  ggtitle("Bacteria")+
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("Fraction")+
+  xlab("")+
+  theme_minimal(base_size = 16) +
+  theme (axis.ticks.x = element_blank(),axis.text.x = element_text(angle = 50, vjust = 1, hjust=1), panel.grid.major.x = element_blank())+ 
+  guides(fill=FALSE)
+  #guides(fill=guide_legend(title="Ecological processes"))
+```
+```{r}
+Phyeuk <- ggplot(binphy_l, aes(x=reorder(phylum,-`Abondance relative`), y = value, fill=variable)) +
+  geom_bar(position = "stack", stat = "identity")+
+  #scale_fill_brewer(palette = "Set3") +
+  scale_fill_manual(values=c("#CECECE","#DC0000FF","#F39B7FFF","#00A087FF","#91D1C2FF"))+
+  theme_bw() +
+  ggtitle("Eukaryota")+
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("")+
+  xlab("")+
+  theme_minimal(base_size = 16) +
+  theme (axis.ticks.x = element_blank(),axis.text.x = element_text(angle = 50, vjust = 1, hjust=1), panel.grid.major.x = element_blank())+ 
+  #guides(fill=FALSE)
+  guides(fill=guide_legend(title="Ecological processes"))
+```
+
+#Process for each domain
+
+```{r}
+load("~/Desktop/Trimdata/Arc/iCAMPout/T1.résumé.rda")
+arc <- t(i$Pt[,-(1:3)])
+colnames(arc) <- "Archeae"
+
+load("~/Desktop/Trimdata/Bac/iCAMPout/T1.résumé.rda")
+bac <- t(i$Pt[,-(1:3)])
+colnames(bac) <- "Bacteria"
+
+load("~/Desktop/Trimdata/Euk/iCAMPout/T1.résumé.rda")
+euc <- t(i$Pt[,-(1:3)])
+colnames(euc) <- "Eukaryota"
+
+library(tidyverse)
+data <- cbind(bac,arc,euc)
+data <- rownames_to_column(as.data.frame(data))
+data <- pivot_longer(data, cols =2:4 , names_to = "domain", values_to = "Pourcentage")
+
+# data <- data %>% dplyr::rename(
+#   Heterogenous_selection = HeS,
+#   Homogenous_selection = HoS,
+#   Disepersal_limitation = DL,
+#   Homogeus_dispersion = HD,
+#   Drift = DR)
+
+# data <- melt(data)
+
+#data$rowname[data$rowname == "DL"] <- "Dispersal limitation (DL)"
+#data$rowname[data$rowname == "HD"] <- "Homogeneous dispersion (HD)"
+#data$rowname[data$rowname == "HeS"] <- "Heterogeneous selection (HeS)"
+#data$rowname[data$rowname == "HoS"] <- "Homogeneous selection (HoS)"
+data$rowname[data$rowname == "DR"] <- "Drift"
+
+data$Pourcentage <- round(as.numeric(data$Pourcentage)*100,1)
+
+data$rowname <- factor(data$rowname, levels = c("Drift","HD","DL","HoS","HeS"))
+my_colors <- RColorBrewer::brewer.pal(6, "Paired")[1:6]
+my_colors <- my_colors[-(3:4)]
+my_colors <- append(my_colors, "#CECECE", after = 0)
+
+Domplot <- ggplot(data, aes(fill=rowname, y=Pourcentage, x=domain)) + 
+  geom_col() +
+  geom_text(aes(label = paste0(Pourcentage, "%")),
+  position = position_stack(vjust = 0.5)) +
+  #scale_fill_brewer(palette = "Set3") +
+  #scale_fill_manual(values=my_colors)+
+  scale_fill_manual(values=c("#CECECE","#DC0000FF","#F39B7FFF","#00A087FF","#91D1C2FF"))+
+  theme_minimal(base_size = 16) +
+  ylab("Fraction") +
+  xlab(NULL)+
+  guides(fill=guide_legend(title="Ecological processes"))+
+  theme(panel.grid.major.x = element_blank())
+
+mypal = pal_npg("nrc", alpha = 1)(9)
+mypal
+```
+
+Enregistrer en pdf
+```{r}
+library(gridExtra)
+library(grid)
+textA = textGrob("(A)", x = 0.01,just="left", gp=gpar(fontsize=17))
+textB = textGrob("(B)", x = 0.01,just="left", gp=gpar(fontsize=17))
+
+g2 <- function(a.gplot){if (!gtable::is.gtable(a.gplot))
+    a.gplot <- ggplotGrob(a.gplot)
+  gtable::gtable_filter(a.gplot, 'guide-box', fixed=TRUE)}
+
+lay <- rbind(c(1,2,NA,NA),
+             c(3,4,5,6),c(3,4,5,6),c(3,4,5,6),c(3,4,5,6),c(7,7,7,7))
+
+pdf("~/Desktop/Article/R scripts article/Figures/Ecologicalprocess.pdf", height = 8, width = 15)
+
+grid.arrange(textA,textB,Domplot + theme(legend.position="none"),
+             Phybac + theme(legend.position="none"),
+             Phyarc + theme(legend.position="none"),
+             Phyeuk + theme(legend.position="none"),
+             g2(Domplot+ theme(legend.position="bottom")), layout_matrix = lay)
+dev.off()
+```
+Enregistrer deuxiéme option
+```{r}
+library(gridExtra)
+library(grid)
+textA = textGrob("(A)", x = 0.01,just="left", gp=gpar(fontsize=17))
+textB = textGrob("(B)", x = 0.01,just="left", gp=gpar(fontsize=17))
+
+g2 <- function(a.gplot){if (!gtable::is.gtable(a.gplot))
+    a.gplot <- ggplotGrob(a.gplot)
+  gtable::gtable_filter(a.gplot, 'guide-box', fixed=TRUE)}
+
+lay <- rbind(c(1,NA,NA),
+             c(2,3,4),c(2,3,4),c(2,3,4),c(2,3,4),c(2,3,4),
+             c(5,NA,NA),
+             c(6,7,7),c(6,7,7),c(6,7,7),c(6,7,7),c(6,7,7))
+
+pdf("~/Desktop/Article/R scripts article/Figures/Ecologicalprocess2.pdf", height = 12, width = 12)
+
+grid.arrange(textA,
+             Phybac + theme(legend.position="none"),
+             Phyarc + theme(legend.position="none"),
+             Phyeuk + theme(legend.position="none"),textB,
+             Domplot + theme(legend.position="none"),
+             g2(Domplot+ theme(legend.position = "bottom")), layout_matrix = lay)
+dev.off()
+```
+ 
