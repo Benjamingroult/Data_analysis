@@ -1,0 +1,178 @@
+---
+title: "dbRDA"
+output: html_document
+---
+
+## Intro
+
+La db RDA est une annalyse de redondance, elle permet d'extraire la variation d'une matrice réponse et de définir quelle partie est due aux variables d'une matrice explicative. Pour cela elle conjuge les résultats de régression linéaire entre variables réponse et et explicatives.
+
+L'avantage de la db-RDA sur la RDA est que'elle permet l'utilisation d'un indice de dissimilarité autre que la distance euclydienne. Bray-Curtis par exemple.  
+
+Statistiquement:  
+- Une matrice de distance est calculée en utilisant un indice de notre choix  
+- Une PCoA est réalisée sur cette matrice  
+- Le eigen value de cette PCoA sont implémenté dans une RDA  
+
+le choix de la matrice de distance est important car une RDA utilise par defaut la distance euclidienne. Cet indice de distance est peu pértinente dans l'annalyse des communautées microbienne car il ne définit comme significatif, seulement des effet de taille trés important, et il pose probléme dans le cas de données présenatnt une grande quantitée de 0.
+
+### Matrice d'ASV
+
+On une utilise une matrice d'ASV raréfié a une abondance relative donnée.  
+**Enlever les ASV les moins abondants permet généralement d'améliorer les résulats**
+
+```{r,warning=FALSE,message=FALSE}
+library(vegan)
+library(phyloseq)
+library(tidyverse)
+library(SoDA)
+library(adespatial)
+library(geosphere)
+```
+
+
+```{r, echo = T}
+path <- "/Users/benjamin/Desktop/Emilien/Bac/"
+count <- read.csv(file.path(path,"ASV.rar.csv"), row.names = 1, header = TRUE)
+
+data <- phyloseq(otu_table(count, taxa_are_rows = T))
+data = filter_taxa(data, function(x) sum(x) > 15, TRUE) #ASV avec une abondance de 15 min
+#data = filter_taxa(data, function(x) sum(x > 3) > (0.2*length(x)), TRUE) # ASV présent avec une abondance d'au moins 3 dans au moins 20% des sites
+nrow(as.data.frame(otu_table(data))) #"Nombre d'ASV restant"
+nrow(as.data.frame(otu_table(data)))/nrow(count) #"Part des ASV conservés"
+count <- as.data.frame(t(otu_table(data)))
+
+barplot(rowSums(count), xlab="Sites")
+barplot(sort(colSums(count), decreasing = T),xlab = "ASV",ylab = "Frequence")
+```
+
+**Transformation Hellinger**  
+Cette transformation est adaptée aux données d'abondance d'espéce car elle minimise le poids des taxons peut présent (Faible abondances et beaucoup de 0).
+**On peut ainsi concentré l'annalyses sur les taxons dominants et déterminer les paramétres environnementaux ayant le plus d'impact sur ces communautées.**
+```{r}
+#count <- log1p(count) #On peut logariser la matrice avant d'appliquer hellinger *A voir*
+count <- as.data.frame(decostand (count, 'hell'))
+```
+
+### Matrice environnementale
+
+On utilise les données de chimie préalablement transformée au **BoxCox** ainsi qu'au **z-score**
+
+```{r}
+chimie <- read.table("/Users/benjamin/Desktop/Emilien/chimie.box.csv")
+chimie <- chimie[row.names(chimie) %in% row.names(count), ] # enlever les sites non présents dans la matrice d'ASV
+```
+
+## Validitée du model
+
+On choisit l'indice a appliquer pour créer la matrice de dissimilarité.L'indice majoritairement utilisé dans le cas de donnée de diversité bactérienne est celui de bray curtis, car il est pertinent pour les data-set contenant beaucoup de 0 tel que les matrice d'abondance d'espéces.
+La validitée du modéle est testée par permutation (ANOVA), on peut augmenter le nombre de permutation pour une meilleure préscision de p-value.
+
+On réalise la dbRDa.
+```{r}
+dbRDA=capscale(count ~., chimie, dist="bray")
+dbRDA
+anova(dbRDA, permutations = 99999)              ## overall test of the significance of the analysis
+```
+
+## Vif (varience inflation factor)
+Permet de tester le degrés de redondance (colinéarité) entre les variables du model!Un Vif élevé montre qu'il y a une redundance entre 2 ou plus de variables dans le model.  
+Un Vif de 1 signifie information unique, totalement non corrélée.
+Un Vif < 10 est correct
+```{r}
+vif.cca(dbRDA)
+plot(dbRDA)
+```
+
+## Variation expliquée
+Si le model est significatif on peut continuer.
+On peut obtenir la variance totale expliquée par nos variables ou R^2 ajusté
+
+```{r}
+R2dbRDA <- RsquareAdj (dbRDA)$adj.r.squared
+R2dbRDA
+```
+
+Le R2 ajusté prend compte du nombre de variables explicatives!
+Une variable importante est la proportion de variance "constraint" et 'unconstraint" elle est disponible en appelant la db_RDA
+Constraint = variance expliquée par les variables connues (matrice explicative)
+Unconstraint = variance expliquée par les variables non inclusent au modéle
+
+## Sélection des variables
+Forward selection automatisée
+```{r echo=T}
+dbRDA.0<-capscale(count~1, chimie) #modèle vide
+ordi <- ordiR2step (dbRDA.0, scope = formula(dbRDA), R2scope = R2dbRDA, direction = 'forward', permutations = 99999)
+ordi$anova
+```
+
+
+Les variables explicatives significatives doivent ensuite étre conservée. On ajuste cependant leurs P-value afin qu'elle soit représentatives du nombre d'itération. On peut ensuite augmenter le nombre de permutation (ex: 50 000) pour avoir une p-value plus précise!
+
+```{r echo=T}
+ordi.adj<-ordi
+ordi.adj$anova$`Pr(>F)` <- p.adjust (ordi$anova$`Pr(>F)`, method = 'holm', n = ncol (chimie))
+ordi.adj$anova
+```
+
+## Partitionnement de la variance
+Permet de décomposer la variance expliquée par les variables significatives déterminé précédement. La variance de la matrice d'espéce expliqué par ces variables dans la RDA est enfaite réparti comme suit:
+
+La fraction  [a+b+c] est la variance expliquée par X1 et * X2 ensemble.  
+La fraction [d] est la variance inexpliquée par X1 et* X2 ensemble.  
+La fraction [a] est la variance expliquée par X1 seulement.  
+La fraction [c] est la variance expliquée par X2 seulement.  
+La fraction [b]est calculée par soustraction, c’est-à-dire b=[a+b]+[b+c]−[a+b+c].  
+
+ <p style="color:red"> Modifier les entrée en fonction des variables significatives</p>
+ 
+```{r}
+varp <- varpart(count, ~ n, ~ t_epi , data = chimie)
+varp
+plot (varp, digits = 2, Xnames = c('n', 't_epi'), bg = c('navy', 'tomato', 'green'))
+```
+
+## Test validité des vecteurs spatiaux
+### MEM
+
+On utilise la MEM (Moran’s Eigenvector Maps) pour décomposer les coordonnées en vecteurs spatiaux ortogonaux. Chacun de ces vecteurs représente donc un shéma de distribution spatial ou temporel ( ici spatial), et peut étre utilisé comme variable explicatives dans une annalyse multivariée. On peut aussi utilisé la PCNM (Principal Coordinates of Neighbor Matrices).  
+
+```{r}
+xy <- read.csv("/Users/benjamin/Desktop/Emilien/chimie.csv", row.names = 1, sep = ",")
+xy <- select(xy,longitude,latitude)
+xy <- xy[row.names(xy) %in% rownames(count), ] # enlever les sites non présents dans la matrice d'ASV
+xy <- geoXY(latitude = xy$latitude, longitude = xy$longitude, unit = 1000)
+
+mem <- as.data.frame(dbmem(xy, silent = FALSE,MEM.autocor="non-null"))
+rda <- capscale(count ~. ,mem[,1:5], distance = "bray")
+anova(rda, permutations = 9999, parallel = NULL)
+```
+
+### PCNM
+```{r}
+xy <- read.csv("/Users/benjamin/Desktop/Emilien/chimie.csv", row.names = 1, sep = ",")
+xy <- select(xy,longitude,latitude)
+xy <- xy[row.names(xy) %in% rownames(count), ] # enlever les sites non présents dans la matrice d'ASV
+xydist <- as.data.frame(distm(xy, fun = distHaversine)/1000)
+row.names(xydist) <- rownames(xy)
+colnames(xydist) <- rownames(xy)
+#xydist$dis <- log(xydist$dis)
+
+pcnmg=vegan::pcnm(xydist)
+pcnm.perc=pcnmg$values[pcnmg$values>0]/sum(pcnmg$values[pcnmg$values>0])
+sum(pcnm.perc[1:6])
+pcnms=pcnmg$vectors[,1:6,drop=FALSE]
+pcnms<- as.data.frame(pcnms)
+pcnms <- pcnms[row.names(pcnms) %in% rownames(count), ]
+
+dbRDA=capscale(count ~.,pcnms)
+anova(dbRDA, permutations = 9999)
+```
+
+## Ref
+
+https://archetypalecology.wordpress.com/2018/02/21/distance-based-redundancy-analysis-db-rda-in-r/#:
+
+https://mb3is.megx.net/gustame/constrained-analyses/rda/dbrda
+
+https://www.davidzeleny.net/anadat-r/doku.php/en:rda_cca
