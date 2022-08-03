@@ -1,0 +1,263 @@
+---
+title: "iCAMP"
+output: html_document
+---
+##Importer les datas
+```{r}
+library(iCAMP)
+library(ape)
+library(phyloseq)
+path <- "~/Puits/Bac/"
+save.wd <- file.path(path,"iCAMPout")
+dir.create(save.wd)
+
+comm <- read.csv(file.path(path,"ASV.matrice.t.csv"), row.names = 1, header = TRUE)
+#colnames(comm) = colnames(comm)%>%str_replace("P.", "P_")%>%str_replace(".arc", "")
+comm <-comm[,!(colnames(comm) == "P_344")]
+
+tree <- ape::read.tree(file.path(path,"tree.midpoint"))
+
+data <- phyloseq(otu_table(comm, taxa_are_rows = T), phy_tree(tree))
+#data = filter_taxa(data, function(x) sum(x!=0) >= 3, TRUE) #ASV présent dans au moins 3 puits
+data <- prune_samples(sample_sums(data)>=1000, data)
+data = filter_taxa(data, function(x) sum(x) > 15, TRUE) #ASV avec une abondance de 10 min
+
+comm <- as.data.frame(otu_table(data))
+tree <- phy_tree(data)
+```
+
+##Transformation des données
+
+Trop d'ASV cause une lenteur d'execution et un bruit de fond important dans les annalyses de model null phylogénétique!  
+**Les données proportionnel  transformée (Hellinger ou log Hellinger) ne sont pas acceptée par iCAMP** (Elle ne l'étais pas mais sont pottentiellement acceptée depuis la maj)
+
+La rarefaction classic entraine une forte surrestimation du **DRIFT**. (Ils conseil de ne pas appliquer de transformation mais juste un denoise en enlevant les singletons.). On peut aussi appliquer une methode de rarefaction alternative **Cumulative abundance cut**.
+
+Le CSS n'est pas forcément mieux.  
+
+L'auteur utilise les données brut, ici on enléve juste les échantillon ayant une trop faible abondance ainsi que les ASV sous représentés (<15)
+
+
+```{r}
+# ###Transformation CSS
+# library(metagenomeSeq)
+# library(biomformat)
+# comm <- as(otu_table(data), "matrix")
+# data <- newMRexperiment(comm)
+# comm <- (MRcounts(data, norm = TRUE, log = TRUE))
+
+comm <- t(comm)
+
+clas <- read.csv(file.path(path,"ASV.tax.csv"), row.names = 1)
+clas <- clas[row.names(clas) %in% colnames(comm), ]
+
+env <- read.csv("chimie.box.csv", sep = " ", row.names = 1)
+env <- env[row.names(env) %in% rownames(comm), ]
+```
+
+## Calculer le K de bloomsberg!
+Permet d'estimer le signal phylogénétique pour chaque variable enviro
+Fucking long! À PARRALÉLISER
+
+```{r}
+library(picante)
+library(foreach)
+library(doParallel)
+
+#setup parallel backend to use many processors
+cl <- makeCluster(detectCores(1)-1) #not to overload your computer
+
+combined <- match.phylo.comm(tree, comm) #vérifier que comm et phy sont coordonés!
+co <- t(combined$comm)
+phy <- combined$phy
+c <- matrix(nrow=nrow(co), ncol=ncol(env))
+
+registerDoParallel(cl)
+x <-foreach(i = colnames(env)) %dopar%
+{
+  c <- apply(co,2, function(x) x*env[,i])
+  c <- rowMeans(c)
+  picante::Kcalc(c,phy)
+}
+stopCluster(cl)
+x <- unlist(x)
+names(x) <-colnames(env)
+x
+
+write.csv(x,file.path(save.wd,"K.csv"))
+```
+
+
+##Choisir les paramètres clefs
+
+```{r}
+prefix="T1"  # prefix of the output file names. usually use a project ID.
+rand.time=1000  # randomization time, 1000 is usually enough.
+nworker=49 # nb processeurs
+memory.G=100 # to set the memory size as you need (but should be less than the available space in your hard disk), so that calculation of large tree will not be limited by physical memory. unit is Gb.
+```
+
+##Calculer la matrice de distance COPHENETQUE
+```{r}
+if(!file.exists(file.path(save.wd,"pd.desc"))) {
+  pd.big=iCAMP::pdist.big(tree = tree, wd=save.wd, nworker = nworker, memory.G = memory.G)
+}else{
+  # if you already calculated the phylogenetic distance matrix in a previous run
+  pd.big=list()
+  pd.big$tip.label=read.csv(paste0(save.wd,"/pd.taxon.name.csv"),row.names = 1,stringsAsFactors = FALSE)[,1]
+  pd.big$pd.wd=save.wd
+  pd.big$pd.file="pd.desc"
+  pd.big$pd.name.file="pd.taxon.name.csv"
+}
+
+```
+
+Annalyser la préférence de niche de chacune des communautées basé sur les variables environnementale et l'abondances des ASV
+Crée une matrice de différence entre chaque ASV basé sur leurs abondance fonction de la valeurs du paramétre environnemental dans chaque puit! Cela donne une matrice utilisée pour le calcul du signal phylogéntique.
+
+```{r}
+niche.dif=iCAMP::dniche(env = env,comm = comm,method = "niche.value",
+                        nworker = nworker,out.dist=FALSE,bigmemo=F,
+                        nd.wd=save.wd)
+```
+
+##Réaliser les bin!
+Grouper les ASV les plus proches en groupes pour une annalyse séparé des processus impliqués dans l'assemblage.
+Les groupements se font en utilisant un seuil sous lequel toutes les connexions existante dans l'arbre sont regroupées ensembles.
+Les groupes doivent avoir une taille minimum pour conserver une puissance statistique minimum. Il faut donc trouver un équilibre entre petit bin (plus fort signal phylogénétique) et gros bin (plus forte puissance statistique) (Conseil: 24)
+
+ds: seuil de distance phylogénétique
+
+bin.size.limit: Taille minimum des groupes
+
+```{r}
+ds =0.5 # setting can be changed to explore the best choice
+bin.size.limit = 60 # setting can be changed to explore the best choice. #For real data, usually try 12 to 48.
+phylobin=taxa.binphy.big(tree = tree, pd.desc = pd.big$pd.file,pd.spname = pd.big$tip.label,
+                         pd.wd = pd.big$pd.wd, ds = ds, bin.size.limit = bin.size.limit,
+                         nworker = nworker)
+tab1 <- phylobin$state.strict
+tab <- phylobin$state.united
+```
+bin.pd.max, bin.pd.mean, and bin.pd.sd:
+the maximum, mean, and standard deviation of the pairwise phylogenetic distances in each strict bin.
+
+Tester l'existance d'un signal phylogénétique dans chaqun des groupes par test de mantel
+
+erreur: `missing observations in cov/cor i.camp ps.bin`vérifier qu'il n'y a pas d'ASV avec une abondance de 0.
+```{r}
+sp.bin=phylobin$sp.bin[,3,drop=FALSE]
+sp.ra=colMeans(comm/rowSums(comm))
+abcut=5 # Abondance minimum pour un ASV, trop faible empéche les corrélation (signal phylogénétique)
+commc=comm[,colSums(comm)>=abcut,drop=FALSE]
+dim(commc)
+spname.use=colnames(commc)
+binps=iCAMP::ps.bin(sp.bin = sp.bin,sp.ra = sp.ra,spname.use = spname.use,pd.desc = pd.big$pd.file, pd.spname = pd.big$tip.label, pd.wd = pd.big$pd.wd,nd.list = niche.dif$nd, nd.spname = niche.dif$names,ndbig.wd = niche.dif$nd.wd, cor.method = c("spearman","pearson"),r.cut = 0.1, p.cut = 0.05, min.spn = 5)
+
+binps$Index
+b <- binps$detail
+
+write.csv(data.frame(ds=ds,n.min=bin.size.limit,binps$Index),file.path(save.wd,paste0(prefix,".PhyloSignalSummary.csv")),row.names = FALSE)
+write.csv(data.frame(ds=ds,n.min=bin.size.limit,binID=rownames(binps$detail),binps$detail),file.path(save.wd,paste0(prefix,".PhyloSignalDetail.csv")),row.names = FALSE)
+
+sum(rowMin(b[,21:30])<=0.01)/length(b[,1]) #Proportion de bins avec un signal phylogénétique significatif
+rowMeans(binps$Index[4,4:13]) #moyenne du coefficient de corrélation dans la totalitée des bins
+```
+Output: index et detail
+
+**Index**
+RAsig: Abondance relative de bins avec un signal phylogénétique significatif, parmi la totalitée des groupes
+RAsig.adj: dans les groupes ayant un nombre d'espéce supérieur à min.sp
+MeanR.sig: Coefficient de corrélation moyen dans les groupes significatifs.
+MeanR: Pareil dans tous les groupes
+
+**Detail**
+Coefficient de corrélation pour chaque varibles/bins
+p value pour chaque variable/bins
+
+On peut modifier les paramétres précédents pour observer quels paramétres offre le plus grand nombre de bin avec un signal phylogénétique significatif.
+
+##iCAMP Analyse
+
+```{r}
+# bin.size.limit = bin.size.limit
+# 
+# sig.index="Confidence" # see other options in help document of icamp.big.
+# icres=iCAMP::icamp.big(comm=comm, pd.desc = pd.big$pd.file, pd.spname=pd.big$tip.label,
+#                        pd.wd = pd.big$pd.wd, rand = rand.time, tree=tree,
+#                        prefix = prefix, ds = 0.2, pd.cut = NA, sp.check = TRUE,
+#                        phylo.rand.scale = "within.bin", taxa.rand.scale = "across.all",
+#                        phylo.metric = "bMPD", sig.index=sig.index, bin.size.limit = bin.size.limit, 
+#                        nworker = nworker, memory.G = memory.G, rtree.save = FALSE, detail.save = TRUE, 
+#                        qp.save = TRUE, detail.null = FALSE, ignore.zero = TRUE, output.wd = save.wd, 
+#                        correct.special = TRUE, unit.sum = rowSums(comm),
+#                        ses.cut = 1.96, rc.cut = 0.95, conf.cut=0.975, omit.option = "no",meta.ab = NULL)
+```
+
+Paramétres `icamp.big`
+- ses.cut: 
+```{r}
+detail.null=TRUE
+bin.size.limit = bin.size.limit
+sig.index="SES.RC" # this is traditional way, with assumption that null values of phylogenetic metrics follow normal distribution. 
+
+icres2=iCAMP::icamp.big(comm=comm, pd.desc = pd.big$pd.file, pd.spname=pd.big$tip.label,
+                       pd.wd = pd.big$pd.wd, rand = rand.time, tree=tree,
+                       prefix = prefix, ds = ds, pd.cut = NA, sp.check = TRUE,
+                       phylo.rand.scale = "within.bin", taxa.rand.scale = "across.all",
+                       phylo.metric = "bMPD", sig.index=sig.index, bin.size.limit = bin.size.limit, 
+                       nworker = nworker, memory.G = memory.G, rtree.save = FALSE, detail.save = TRUE, 
+                       qp.save = TRUE, detail.null = detail.null, ignore.zero = TRUE, output.wd = save.wd,
+                       correct.special = TRUE, unit.sum = rowSums(comm), special.method = "depend",
+                       ses.cut = 1.96, rc.cut = 0.95, conf.cut=0.975, omit.option = "no",meta.ab = NULL)
+```
+
+Test de normlité des valeurs du model null
+```{r}
+#nntest=iCAMP::null.norm(icamp.output=icres2, p.norm.cut=0.05, detail.out=FALSE)
+```
+
+
+Changer le index de significativité si la distribution des valeurs de nul est non normale.
+Pas besoin de re run icamp big.
+
+SES = stegen method, différence observé/nul
+confidence = Methode meilleure si la distribution des valeurs null n'est pas normale
+```{r}
+#i2=iCAMP::change.sigindex(icamp.output = icout, sig.index = "Confidence", detail.save = TRUE)
+#save(icout2,file = paste0(prefix,".iCAMP.",sig.index2,".detail.rda"))
+```
+
+Annalyses des résulats obtenu pour chaque bins 
+```{r}
+i <- icamp.bins(icres2, treat = NULL, clas = clas, silent = FALSE,
+boot = T, rand.time = 1000, between.group = FALSE)
+# SAVE
+save(i, file=file.path(save.wd,paste0(prefix,".résumé.rda")))# just to archive the result. rda file is automatically compressed, and easy to load into R.
+write.csv(i$Pt,file.path(save.wd, paste0(prefix,".ProcessImportance_EachGroup.csv")),row.names = FALSE)
+write.csv(i$Ptk,file.path(save.wd,paste0(prefix,".ProcessImportance_EachBin_EachGroup.csv")),row.names = FALSE)
+write.csv(i$Ptuv,file.path(save.wd,paste0(prefix,".ProcessImportance_EachTurnover.csv")),row.names = FALSE)
+write.csv(i$BPtk,file.path(save.wd,paste0(prefix,".BinContributeToProcess_EachGroup.csv")),row.names = FALSE)
+write.csv(data.frame(ID=rownames(i$Class.Bin),i$Class.Bin,stringsAsFactors = FALSE),
+          file.path(save.wd, paste0(prefix,".Taxon_Bin.csv")),row.names = FALSE)
+write.csv(i$Bin.TopClass,file.path(save.wd, paste0(prefix,".Bin_TopTaxon.csv")),row.names = FALSE)
+```
+
+Plot process assemblage
+```{r}
+library(ggplot2)
+library(tidyverse)
+data=as.data.frame(t(i$Pt[4:8]))
+data <- data %>% mutate(Type = "Bac")
+data$V1 <- round(as.numeric(data$V1)*100,1)
+            
+ggplot(data, aes(fill=row.names(data), y=V1, x=Type)) + 
+ geom_col() +
+  geom_text(aes(label = paste0(V1, "%")),
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 16) +
+  ylab("Percentage") +
+  xlab(NULL)
+```
+
