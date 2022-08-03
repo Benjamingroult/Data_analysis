@@ -1,0 +1,94 @@
+
+```{r}
+library(vegan)
+path="~/Desktop/iCAMP.uni.rar/Euk/"
+
+comm = read.csv(file.path(path,"ASV.uni.rar31.csv"), header = TRUE, row.names = 1)
+tax <- read.csv(file.path(path,"ASV.tax.csv"), header = TRUE, row.names = 1)
+#sort(diversity(t(comm), "shannon"))
+tax <- tax[rownames(tax) %in% rownames(comm),]
+#unique(tax$phylum)
+data <- phyloseq(otu_table(as.matrix(comm), taxa_are_rows = TRUE),tax_table(as.matrix(tax)))
+#rarecurve(t(otu_table(data)), step=50, cex=0.35)
+
+library(ggplot2)
+data  = transform_sample_counts(data, function(x) x / sum(x) )
+
+# Calculer la moyenne d'abondance relative de chaque asv 
+asv <- rowMeans(data.frame(otu_table(data)))
+df <- data.frame(asv,tax_table(data))
+
+# Add taxonomy and total read counts to this data.frame
+#df = data.frame(asv = taxa_sums(data),tax_table(data))
+p <- plyr::ddply(df, "phylum", function(df1){
+  data.frame(asv=sum(df1$asv,na.rm = T),stringsAsFactors = F)})
+#p = mutate(p, asv = asv / sum(asv)) #PAS NECESSSAIRE DE RECALCULER LA PROPORTION
+colnames(p)[1] <- "Phylum"
+p <- na.omit(p)
+p <- p[order(p[,2], decreasing=T),]
+p <- p[1:10,]
+
+library(ggsci)
+mypal = pal_npg("nrc", alpha = 1)(10)
+mypal <- append(mypal[!mypal %in% "#DC0000FF"], "#CECECE", after = length(mypal))
+
+```
+
+```{r}
+p$Phylum <- factor(p$Phylum, levels = c(sort(p$Phylum[!p$Phylum %in% "unclassified_Eukaryota"]),"unclassified_Eukaryota"))
+library(ggsci)
+e <- ggplot(p, aes(x=1, y = asv, fill=Phylum)) +
+  geom_bar(position = "stack", stat = "identity")+
+  scale_fill_manual(values=c(mypal))+
+  #scale_fill_brewer(palette = "Set3") +
+  ggtitle("Eukaryota")+
+  theme_minimal(base_size = 16) +
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("") +
+  xlab("")+
+    ylim(0,1)+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.grid.major.x = element_blank(),panel.grid.minor = element_blank(),)
+e
+```
+
+```{r}
+p$Phylum <- factor(p$Phylum, levels = c(sort(p$Phylum[!p$Phylum %in% "unclassified_Archaea"]),"unclassified_Archaea"))
+
+library(ggsci)
+a <- ggplot(p, aes(x=1, y = asv, fill=Phylum)) +
+  geom_bar(position = "stack", stat = "identity")+
+  scale_fill_manual(values=c(mypal))+
+  ggtitle("Archaea")+
+  #scale_fill_brewer(palette = "Set3") +
+  theme_minimal(base_size = 16) +
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("") +
+  xlab("")+
+  ylim(0,1)+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.grid.major.x = element_blank(),panel.grid.minor = element_blank(),)
+```
+
+```{r}
+p$Phylum <- factor(p$Phylum, levels = c(sort(p$Phylum[!p$Phylum %in% "unclassified_Bacteria"]),"unclassified_Bacteria"))
+library(ggsci)
+b <- ggplot(p, aes(x=1, y = asv, fill=Phylum)) +
+  geom_bar(position = "stack", stat = "identity")+
+  scale_fill_manual(values=c(mypal))+
+  ggtitle("Bacteria")+
+   #scale_fill_brewer(palette = "Set3") +
+  theme_minimal(base_size = 16) +
+  #geom_text(aes(label = paste0(round(100*asv, digits = 1)," %")), position = position_stack(vjust = 0.5),size = 3)+
+  ylab("") +
+  xlab("")+
+  ylim(0,1)+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), panel.grid.major.x = element_blank(),panel.grid.minor = element_blank())
+```
+
+```{r}
+library(gridExtra)
+pdf("~/Desktop/R scripts article/Figures/HistoMoyen.pdf", height = 6, width = 13)
+grid.arrange(b,a,e, ncol=3, left="mean relative abundance")
+dev.off()
+```
+
+

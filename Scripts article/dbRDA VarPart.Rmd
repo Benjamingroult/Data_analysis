@@ -1,0 +1,133 @@
+
+```{r}
+library(phyloseq)
+library(vegan)
+path <- "~/Desktop/iCAMP.uni.rar/Bac/"
+comm <- read.csv(file.path(path,"ASV.uni.rar.csv"), row.names = 1, header = TRUE)
+comm <- decostand(comm, method="hellinger")
+MPDab <- read.csv(file.path(path,"B.MPDab.csv"), row.names = 1, header = TRUE, sep = ",")
+MNTDab <- read.csv(file.path(path,"B.MNTDab.csv"), row.names = 1, header = TRUE, sep = ",")
+
+
+### Test dbrda
+env.use <- read.csv("~/Desktop/R/Projet Laurentides/data/chimie/chimie.box.csv", sep = " ") #import chimie
+env.use <- env.use[row.names(env.use) %in% colnames(MNTDab), ]
+
+#MNTDab <- vegdist(t(comm), method="bray") #Bray curtis 
+MNTDab <- MPDab
+
+library(vegan)
+dbRDA=capscale(MNTDab ~.,env.use)
+anova(dbRDA, permutations = 9999)
+
+vif.cca(dbRDA)
+
+R2dbRDA <- RsquareAdj (dbRDA)$adj.r.squared
+R2dbRDA
+
+dbRDA.0<-capscale(MNTDab~1, env.use) #modèle vide
+ordi <- ordiR2step (dbRDA.0, scope = formula(dbRDA), R2scope = R2dbRDA, direction = 'forward', permutations = 9999)
+ordi$anova
+
+ordi.adj<-ordi
+ordi.adj$anova$`Pr(>F)` <- p.adjust (ordi$anova$`Pr(>F)`, method = "BH", n = ncol (env.use))
+ordi.adj$anova
+```
+
+```{r}
+### variation partitionning!
+varp <- varpart(MNTDab,  ~ Potassium , ~pH, ~Sulfate, data = env.use)
+varp
+plot (varp, digits = 2, Xnames = c('Potassium', 'pH°','Sulfate'), bg = c('navy', 'tomato', 'green'))
+
+## Mantel test!
+
+mantel(MNTDab,dist(env.use), method = "pearson", permutations = 9999)
+mantel(vegdist(comm, method = "bray"),dist(env.use), method = "pearson", permutations = 9999)
+```
+
+```{r}
+## Test PCNM et dbRDA
+
+xy <- read.csv("~/Desktop/R/xy.wgs84.csv", sep = ";", row.names = 1)
+xy <- xy[row.names(xy) %in% colnames(comm), ]
+gdis=dist(xy)
+gdis3c=iCAMP::dist.3col(gdis)
+
+pcnmg=vegan::pcnm(gdis)
+pcnm.perc=pcnmg$values[pcnmg$values>0]/sum(pcnmg$values[pcnmg$values>0])
+sum(pcnm.perc[1:5])
+pcnms=pcnmg$vectors[,1:5,drop=FALSE]
+pcnms<- as.data.frame(pcnms)
+pcnms <- pcnms[row.names(pcnms) %in% colnames(comm), ]
+
+library(vegan)
+dbRDA=capscale(MNTDab ~.,pcnms)
+anova(dbRDA, permutations = 9999)
+
+vif.cca(dbRDA)
+
+R2dbRDA <- RsquareAdj (dbRDA)$adj.r.squared
+R2dbRDA
+
+dbRDA.0<-capscale(MNTDab~1, pcnms) #modèle vide
+ordi <- ordiR2step (dbRDA.0, scope = formula(dbRDA), R2scope = R2dbRDA, direction = 'forward', permutations = 9999)
+ordi$anova
+
+ordi.adj<-ordi
+ordi.adj$anova$`Pr(>F)` <- p.adjust (ordi$anova$`Pr(>F)`, method = "holm", n = ncol (env.use))
+ordi.adj$anova
+```
+
+
+MEM
+
+```{r}
+xy <- read.csv("~/Desktop/R/xy.wgs84.csv", sep = ";", row.names = 1)
+xy <- xy[row.names(xy) %in% colnames(comm), ]
+
+library(adespatial)
+mem <- as.data.frame(dbmem(xy, silent = FALSE))
+dbRDA <- capscale(MNTDab ~. ,mem)
+anova(dbRDA, permutations = 99999)
+
+vif.cca(dbRDA)
+
+R2dbRDA <- RsquareAdj (dbRDA)$adj.r.squared
+R2dbRDA
+
+dbRDA.0<-capscale(MNTDab~1, mem) #modèle vide
+ordi <- ordiR2step (dbRDA.0, scope = formula(dbRDA), R2scope = R2dbRDA, direction = 'forward', permutations = 9999)
+ordi$anova
+
+ordi.adj<-ordi
+ordi.adj$anova$`Pr(>F)` <- p.adjust (ordi$anova$`Pr(>F)`, method = "holm", n = ncol (env.use))
+ordi.adj$anova
+```
+
+```{r}
+library(ape)
+library(vegan)
+arc <- read.csv("~/Desktop/iCAMP.uni.rar/Euk/ASV.uni.rar31.csv", row.names = 1, header = TRUE)
+arc <- decostand(arc, "hellinger")
+arc <- vegdist(t(arc), method = "bray")
+arcpcoa <- pcoa(arc)
+arcpcoa$values$Cumul_eig
+
+dbRDA <- capscale(MNTDab ~. ,mem)
+anova(dbRDA, permutations = 99999)
+
+vif.cca(dbRDA)
+
+R2dbRDA <- RsquareAdj (dbRDA)$adj.r.squared
+R2dbRDA
+
+dbRDA.0<-capscale(MNTDab~1, mem) #modèle vide
+ordi <- ordiR2step (dbRDA.0, scope = formula(dbRDA), R2scope = R2dbRDA, direction = 'forward', permutations = 9999)
+ordi$anova
+
+ordi.adj<-ordi
+ordi.adj$anova$`Pr(>F)` <- p.adjust (ordi$anova$`Pr(>F)`, method = "holm", n = ncol (env.use))
+ordi.adj$anova
+```
+

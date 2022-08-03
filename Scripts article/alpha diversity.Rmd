@@ -1,0 +1,146 @@
+```{r}
+library(vegan)
+path="~/Desktop/iCAMP.uni.rar/Arc/"
+bac = read.csv(file.path(path,"ASV.uni.rar31.csv"), header = TRUE, row.names = 1)
+
+xy <- read.csv("~/Desktop/R/xy.wgs84.csv", sep = ";", row.names = 1)
+xy <- xy[row.names(xy) %in% colnames(bac), ]
+xy <- xy[sort(colnames(bac)),]
+xy <- xy[,c(2,1)]
+
+sort(diversity(t(bac),"shannon"))
+bac <- decostand(bac,method = "hellinger")
+bac.bray <- vegdist(t(bac), method = "bray")
+bac.bray=iCAMP::dist.3col(bac.bray)
+#bac.bray$dis <- log(bac.bray$dis)
+
+library(geosphere)
+xydist <- as.data.frame(distm(xy, fun = distHaversine)/1000)
+row.names(xydist) <- rownames(xy)
+colnames(xydist) <- rownames(xy)
+xydist=iCAMP::dist.3col(xydist)
+#xydist$dis <- log(xydist$dis)
+
+
+dist <- merge(xydist, bac.bray, by=c("name1","name2"))
+cor.test(dist$dis.x, dist$dis.y, method="spearman")
+```
+
+
+
+```{r}
+Rbac <- dist
+Reuk <- dist
+Rarc <- dist
+
+```
+
+Utiliser les matrices de distance phylogénétiques 
+
+```{r}
+bac = read.csv(file.path(path,"B.MPDab31.csv"), header = TRUE, row.names = 1)
+bac.bray <- bac
+bac.bray=iCAMP::dist.3col(bac.bray)
+
+dist <- merge(xydist, bac.bray, by=c("name1","name2"))
+cor.test(dist$dis.x, dist$dis.y, method="spearman")
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+#dist <- dist[-248,] # enlever juste une valeur abérente bactéries
+
+#pdf("~/Desktop/R scripts article/Figures/distancedecayEUK.pdf")
+Gbac <- ggplot(data = Rbac, aes(x = dis.y, y = dis.x ))+
+  geom_point(cex=.5) + stat_cor(method = "spearman",label.x.npc = 0.3) +
+  #stat_cor(method = "spearman") +
+  stat_smooth(method = "lm", color="red")+
+  ggtitle("Bacteria")+
+  xlab("Community dissimilarities") +
+  ylim(0,190)+ #xlim(0.4,1)+
+  #coord_cartesian(xlim=c(0.9, 1))+ ## permet de ne pas suprimer les points en dehors des limites
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),axis.title.x=element_blank(),plot.title.position = "plot")
+Gbac
+
+Garc <- ggplot(data = Rarc, aes(x = dis.y, y = dis.x ))+
+  geom_point(cex=.5) +stat_cor(method = "spearman",label.x.npc = 0.3) +
+  #stat_cor(method = "spearman") +
+  stat_smooth(method = "lm", color="red")+
+  ggtitle("Archaea")+
+  ylim(0,190)+ #xlim(0.5,1)+
+  #coord_cartesian(xlim=c(0.85, 1))+ ## permet de ne pas suprimer les points en dehors des limites
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),axis.title.x=element_blank(),plot.title.position = "plot")
+Garc
+
+Geuk <- ggplot(data = Reuk, aes(x = dis.y, y = dis.x))+
+  geom_point(cex=.5) + stat_cor(method = "spearman",label.x.npc = 0.4) +
+  #stat_cor(method = "spearman") +
+  stat_smooth(method = "lm", color="red")+
+  ggtitle("Eukaryote")+
+  ylim(0,190)+ #xlim(0.5,1)+
+  #coord_cartesian(xlim=c(0.9, 1))+ ## permet de ne pas suprimer les points en dehors des limites
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),axis.title.x=element_blank(),plot.title.position = "plot")
+Geuk
+```
+```{r}
+library(gridExtra)
+pdf("~/Desktop/R scripts article/Figures/distancedecayPHYLOMPD.pdf", height = 3, width = 8)
+grid.arrange(Gbac,Garc,Geuk, ncol=3, left="Geographic distance (Km)", bottom="Phylogenetic dissimilarities")
+dev.off()
+```
+```{r}
+library(gridExtra)
+pdf("~/Desktop/R scripts article/Figures/distancedecayPhylo.pdf", height = 3, width = 8)
+grid.arrange(Gbac,Garc,Geuk, ncol=3, left="Geographic distance (Km)", bottom="Phylogenetic dissimilarities")
+dev.off()
+```
+
+Corrélation entres les indices de diversités
+
+indice de shannon
+```{r}
+bac = read.csv("~/Desktop/iCAMP.uni.rar/Bac/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+bac <- decostand(bac, method = "hellinger")
+arc <- read.csv("~/Desktop/iCAMP.uni.rar/Arc/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+arc <- decostand(arc, method = "hellinger")
+euk <- read.csv("~/Desktop/iCAMP.uni.rar/Euk/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+euk <- decostand(euk, method = "hellinger")
+
+div <- as.data.frame(diversity(t(bac),"shannon"))
+names(div)[1] <- "bac"
+div$arc <- diversity(t(arc),"shannon")
+div$euk<- diversity(t(euk),"shannon")
+
+cor.test(div$bac, div$arc, method="spearman")
+cor.test(div$euk, div$arc, method="spearman")
+cor.test(div$bac, div$euk, method="spearman")
+```
+Faith Phylogenetic diversity index
+
+```{r}
+bac = read.csv("~/Desktop/iCAMP.uni.rar/Bac/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+bacT <- ape::read.tree("~/Desktop/iCAMP.uni.rar/Bac/tree.midpoint")
+arc <- read.csv("~/Desktop/iCAMP.uni.rar/Arc/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+arcT <- ape::read.tree("~/Desktop/iCAMP.uni.rar/Arc/tree.midpoint")
+euk <- read.csv("~/Desktop/iCAMP.uni.rar/Euk/ASV.uni.rar31.csv", header = TRUE, row.names = 1)
+eukT <- ape::read.tree("~/Desktop/iCAMP.uni.rar/Euk/tree.midpoint")
+
+library(picante)
+Bdiv <- as.data.frame(pd(t(bac),bacT))
+Adiv <- as.data.frame(pd(t(arc),arcT))
+Ediv <- as.data.frame(pd(t(euk),eukT))
+
+Bdiv$arc <- Adiv$SR
+Bdiv$euk <- Ediv$SR
+cor.test(Bdiv$SR, Bdiv$arc,method="spearman")
+cor.test(Bdiv$SR, Bdiv$euk,method="spearman")
+cor.test(Bdiv$euk, Bdiv$arc,method="spearman")
+
+Bdiv$arcPD <- Adiv$PD
+Bdiv$eukPD <- Ediv$PD
+cor.test(Bdiv$PD, Bdiv$arcPD,method="spearman")
+cor.test(Bdiv$PD, Bdiv$eukPD,method="spearman")
+cor.test(Bdiv$eukPD, Bdiv$arcPD,method="spearman")
+```

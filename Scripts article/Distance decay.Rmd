@@ -1,0 +1,167 @@
+```{r}
+library(vegan)
+path="~/Desktop/iCAMP.uni.rar/Arc/"
+bac = read.csv(file.path(path,"ASV.uni.rar.csv"), header = TRUE, row.names = 1)
+
+xy <- read.csv("~/Desktop/R/xy.wgs84.csv", sep = ";", row.names = 1)
+xy <- xy[row.names(xy) %in% colnames(bac), ]
+xy <- xy[sort(colnames(bac)),]
+xy <- xy[,c(2,1)]
+
+sort(diversity(t(bac),"shannon"))
+bac <- decostand(bac,method = "hellinger")
+bac.bray <- vegdist(t(bac), method = "bray")
+bac.bray=iCAMP::dist.3col(bac.bray)
+#bac.bray$dis <- log(bac.bray$dis)
+
+library(geosphere)
+xydist <- as.data.frame(distm(xy, fun = distHaversine)/1000)
+row.names(xydist) <- rownames(xy)
+colnames(xydist) <- rownames(xy)
+xydist=iCAMP::dist.3col(xydist)
+#xydist$dis <- log(xydist$dis)
+
+
+dist <- merge(xydist, bac.bray, by=c("name1","name2"))
+cor.test(dist$dis.x, dist$dis.y, method="spearman")
+```
+
+```{r}
+Rbac <- dist
+Reuk <- dist
+Rarc <- dist
+```
+
+Utiliser les matrices de distance phylogénétiques 
+
+```{r}
+bac = read.csv(file.path(path,"B.MPDab.csv"), header = TRUE, row.names = 1)
+bac.bray <- bac
+bac.bray=iCAMP::dist.3col(bac.bray)
+
+dist <- merge(xydist, bac.bray, by=c("name1","name2"))
+cor.test(dist$dis.x, dist$dis.y, method="spearman")
+```
+```{r}
+Rbac2 <- dist
+Reuk2 <- dist
+Rarc2 <- dist
+```
+
+Graphiques composition des communautés (Bray curtis)
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+#dist <- dist[-248,] # enlever juste une valeur abérente bactéries
+
+#pdf("~/Desktop/R scripts article/Figures/distancedecayEUK.pdf")
+Gbac <- ggplot(data = Rbac, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman",label.x.npc="left", label.y=1.009) +stat_smooth(method = "lm", color="red")+
+  ggtitle("Bacteria")+xlab("")+
+  ylab("Community dissimilarities") +
+  coord_cartesian(ylim = c(0.89,1.015), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),plot.title.position = "plot",plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+Gbac
+
+Garc <- ggplot(data = Rarc, aes(x = dis.x, y = dis.y))+
+  geom_point(cex=.4) + stat_cor(method = "spearman",label.x.npc="left", label.y=1.009) +stat_smooth(method = "lm", color="red")+
+  ggtitle("Archaea")+ xlab("Geographic distance (Km)")+
+  coord_cartesian(ylim = c(0.89,1.015), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+Garc
+
+Geuk <- ggplot(data = Reuk, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman",label.x.npc="left", label.y=1.009) +stat_smooth(method = "lm", color="red")+
+  ggtitle("Eukaryota")+xlab("")+
+  coord_cartesian(ylim = c(0.89,1.015), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+Geuk
+```
+Graphiques composition phylogénétique (BMNTD)
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+G2bac <- ggplot(data = Rbac2, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman", label.x.npc="left", label.y=0.65) +stat_smooth(method = "lm", color="red")+
+  ggtitle("Bacteria")+xlab("")+
+  ylab("Phylogenetic dissimilarities") +
+  coord_cartesian(ylim = c(0,0.7), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),plot.title.position = "plot",plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+
+G2bac
+
+G2arc <- ggplot(data = Rarc2, aes(x = dis.x, y = dis.y))+
+  geom_point(cex=.4) + stat_cor(method = "spearman",label.x.npc="left", label.y=0.8) +stat_smooth(method = "lm", color="red")+
+  ggtitle("Archaea")+ xlab("Geographic distance (Km)")+
+  coord_cartesian(ylim = c(0,0.90), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+G2arc
+
+
+G2euk <- ggplot(data = Reuk2, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman", label.y=0.8)+stat_smooth(method = "lm", color="red")+
+  ggtitle("Eukaryota")+xlab("")+
+  coord_cartesian(ylim = c(0,0.90), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t =0, r = 0, b = 0, l = 20))
+G2euk
+```
+```{r}
+library(gridExtra)
+library(grid)
+textA = textGrob("(A)", x = 0.01,just="left", gp=gpar(fontsize=17))
+textB = textGrob("(B)", x = 0.01,just="left", gp=gpar(fontsize=17))
+
+lay <- rbind(c(1,NA,NA),
+             c(2,3,4),c(2,3,4),c(2,3,4),c(2,3,4),c(2,3,4),
+             c(5,NA,NA),
+             c(6,7,8),c(6,7,8),c(6,7,8),c(6,7,8),c(6,7,8))
+
+pdf("~/Desktop/Article/R scripts article/Figures/distancedecayFinal.pdf", height = 8, width = 10)
+
+grid.arrange(textA,Gbac,Garc,Geuk,textB,G2bac,G2arc,G2euk, layout_matrix = lay)
+dev.off()
+```
+
+Graphiques composition phylogénétique (BMPD)
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+G2bac <- ggplot(data = Rbac2, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman", label.x.npc="left") +stat_smooth(method = "lm", color="red")+
+  ggtitle("Bacteria")+xlab("")+
+  ylab("Phylogenetic dissimilarities") +
+  #coord_cartesian(ylim = c(0,0.7), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),plot.title.position = "plot",plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+
+G2bac
+
+G2arc <- ggplot(data = Rarc2, aes(x = dis.x, y = dis.y))+
+  geom_point(cex=.4) + stat_cor(method = "spearman",label.x.npc="left") +stat_smooth(method = "lm", color="red")+
+  ggtitle("Archaea")+ xlab("Geographic distance (Km)")+
+  #coord_cartesian(ylim = c(0,0.90), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t = 0, r = 0, b = 0, l = 20))
+G2arc
+
+
+G2euk <- ggplot(data = Reuk2, aes(x = dis.x, y = dis.y ))+
+  geom_point(cex=.4) + stat_cor(method = "spearman")+stat_smooth(method = "lm", color="red")+
+  ggtitle("Eukaryota")+xlab("")+
+  #coord_cartesian(ylim = c(0,0.90), xlim = c(0, 165))+
+  theme_bw()+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),axis.title.y=element_blank(),plot.title.position = "plot",
+  plot.margin = margin(t =0, r = 0, b = 0, l = 20))
+G2euk
+```
+
+```{r}
+pdf("~/Desktop/Article/R scripts article/Figures/distancedecayBMPD.pdf", height = 3, width = 10)
+grid.arrange(G2bac,G2arc,G2euk, ncol=3)
+dev.off()
+```
