@@ -1,0 +1,125 @@
+---
+title: "IdTaxa Training set"
+output: html_document
+---
+[vignette pour créer un training set](https://www.bioconductor.org/packages/release/bioc/vignettes/DECIPHER/inst/doc/ClassifySequences.pdf)
+
+Modifier le fichier fasta, ajouter "Root;" au début de chaque taxonomie.
+
+```{r}
+#fasta <- seqinr::read.fasta("~/TestEuc/pr2_custom.csv.fasta", as.string = TRUE)
+fasta <- seqinr::read.fasta("~/TestEuc/pr2sofia.fasta", as.string = TRUE)
+names(fasta) <- paste("Root;", sep = "", names(fasta))
+seqinr::write.fasta(fasta, names(fasta),"~/TestEuc/pr2sofia.root.fasta")
+```
+
+On entraine le classifier avec notre fichier fasta issu de la Base de Donnée
+```{r}
+
+library(DECIPHER)
+# specify the path to your file of training sequences:
+seqs_path <- "~/TestEuc/pr2sofia.root.fasta"
+# read the sequences into memory
+seqs <- readDNAStringSet(seqs_path)
+
+## (optionally) specify a path to the taxid file:
+rank_path <- "~/TestEuc/pr2sofia.taxid"
+ taxid <- read.table(rank_path,
+header=FALSE,
+col.names=c('Index', 'Name', 'Parent', 'Level', 'Rank'),
+sep="*", # asterisks delimited
+quote="", # preserve quotes
+stringsAsFactors=FALSE)
+# OR, if no taxid text file exists, use:
+#taxid <- NULL
+```
+
+Enlever les gaps
+```{r}
+# if they exist, remove any gaps in the sequences:
+seqs <- RemoveGaps(seqs)
+```
+
+S'assurer que toutes séquences sont dans la même orientation
+```{r}
+# ensure that all sequences are in the same orientation:
+seqs <- OrientNucleotides(seqs)
+```
+
+Dans le cas ou la base de données contiens des groupes
+** Vérifier**
+```{r}
+# obtain the taxonomic assignments
+groups <- names(seqs) # sequence names
+# assume the taxonomy begins with 'Root;'
+groups <- gsub("(.*)(Root;)", "\\2", groups) # extract the group label
+groupCounts <- table(groups)
+u_groups <- names(groupCounts) # unique groups
+length(u_groups) # number of groups
+```
+Controler pour la taille des groupes
+
+```{r}
+maxGroupSize <- 1000 # max sequences per label (>= 1)
+remove <- logical(length(seqs))
+for (i in which(groupCounts > maxGroupSize)) {
+index <- which(groups==u_groups[i])
+keep <- sample(length(index),
+maxGroupSize)
+remove[index[-keep]] <- TRUE
+}
+sum(remove) # number of sequences eliminated
+```
+
+Entrainement de la méthode IdTAXA
+
+```{r}
+maxIterations <- 3 # must be >= 1
+allowGroupRemoval <- FALSE
+probSeqsPrev <- integer() # suspected problem sequences from prior iteration
+for (i in seq_len(maxIterations)) {
+cat("Training iteration: ", i, "\n", sep="")
+# train the classifier
+trainingSet <- LearnTaxa(seqs[!remove],
+names(seqs)[!remove],
+taxid)
+# look for problem sequences
+probSeqs <- trainingSet$problemSequences$Index
+if (length(probSeqs)==0) {
+cat("No problem sequences remaining.\n")
+break
+} else if (length(probSeqs)==length(probSeqsPrev) &&
+all(probSeqsPrev==probSeqs)) {
+cat("Iterations converged.\n")
+break
+}
+if (i==maxIterations)
+break
+probSeqsPrev <- probSeqs
+# remove any problem sequences
+index <- which(!remove)[probSeqs]
+remove[index] <- TRUE # remove all problem sequences
+if (!allowGroupRemoval) {
+# replace any removed groups
+missing <- !(u_groups %in% groups[!remove])
+missing <- u_groups[missing]
+if (length(missing) > 0) {
+index <- index[groups[index] %in% missing]
+remove[index] <- FALSE # don't remove
+}
+}
+}
+sum(remove) # total number of sequences eliminated
+length(probSeqs) # number of remaining problem sequences
+```
+On peut maintenant observer le training set, ces différentes catégories et enregistrer ce training set sous forme de Rdata
+```{r}
+trainingSet
+plot(trainingSet)
+save(trainingSet, file="~/TestEuc/trainingset.eucDB.notaxid.RData")
+```
+Enregistrer une version compréssé du training set.
+```{r}
+R.utils::gzip("~/TestEuc/pr2_trainingset.1000.RData", destname="~/TestEuc/pr2_trainingset.1000.RData.gz", remove=F)
+```
+

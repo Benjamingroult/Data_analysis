@@ -1,0 +1,95 @@
+---
+title: "Créer TAXID"
+output: html_document
+---
+[Bases de données au format RData](https://www.bioconductor.org/packages/release/bioc/vignettes/DECIPHER/inst/doc/ClassifySequences.pdf)
+
+La création de l'objet TAXID est complémentaire a la création du `trainingset`et permet d'associer a chaque taxonomie son rang. L'utilisation de cet objet n'est normalement pas obligatoire, mais est necessaire pour l'intégration à la pipeline DADA2.
+
+Fusionner PR2 et sofia ** Ne fonctionne pas car doublons entre les 2 bases de données**
+
+La fusion de plusieurs bases de données est possible mais la création d'un objet `Taxid` n'est pas possible lors de présence de doublons dans la taxonomie.
+```{r}
+# library(seqinr)
+# pr2 <- seqinr::read.fasta("~/TestEuc/pr2_custom.csv.fasta", as.string = TRUE)
+# sofia <- seqinr::read.fasta("~/TestEuc/newsofia.fasta", as.string = TRUE)
+# pr2sofia <- append(pr2, sofia)
+# name <- as.data.frame(names(pr2sofia))
+# name <- tidyr::separate(name,`names(pr2sofia)`,c("d","p","c","o","f","g","s","n"), sep=";")
+# name <- tidyr::unite(name[-c(7)], "a", sep=";")
+# names(pr2sofia) <-as.list(name$a)
+# 
+#write.fasta(pr2sofia,names(pr2sofia),"~/TestEuc/pr2sofia.fasta")
+```
+
+Modifier le fichier Fasta pour isoler la taxonomie et modifier son format.
+```{r}
+library(tidyverse)
+fasta <- seqinr::read.fasta("~/TestEuc/eucDB.6TL.fasta", as.string = TRUE)
+iso.tax <- as.data.frame(names(pr2sofia))
+iso.tax <- tidyr::separate(iso.tax,`names(pr2sofia)`,c("d","p","c","o","f","g","n"), sep=";")
+```
+
+On ajoute devant chaque niveau un marqueur correspondant a sont rang.
+```{r}
+bd <- iso.tax
+bd[,1]<-paste("d__",sep="",bd$d)
+bd[,2]<-paste("p__",sep="",bd$p)
+bd[,3]<-paste("c__",sep="",bd$c)
+bd[,4]<-paste("o__",sep="",bd$o)
+bd[,5]<-paste("f__",sep="",bd$f)
+bd[,6]<-paste("g__",sep="",bd$g)
+
+colnames(bd) <- NA
+
+write.table(bd,"~/TestEuc/almosttaxid.csv", row.names = F,col.names = FALSE, quote = F,sep = ";")
+```
+
+Transformer le fichier contenant la bd en taxid
+```{r}
+ranks <- readLines("~/TestEuc/almosttaxid.csv")
+taxa <- setNames(c("domain", "phylum", "class","order", "family", "genus"),
+c("d__", "p__","c__", "o__", "f__", "g__"))
+ranks <- strsplit(ranks, ";", fix=T)
+count <- 1L
+groups <- "Root"
+index <- -1L
+level <- 0L
+rank <- "rootrank"
+pBar <- txtProgressBar(style=3)
+for (i in seq_along(ranks)) {
+for (j in seq_along(ranks[[i]])) {
+rank_level <- taxa[substring(ranks[[i]][j], 1, 3)]
+group <- substring(ranks[[i]][j], 4)
+w <- which(groups==group & rank==rank_level)
+if (length(w) > 0) {
+parent <- match(substring(ranks[[i]][j - 1], 4),
+groups)
+if (j==1 || any((parent - 1L)==index[w]))
+next # already included
+}
+count <- count + 1L
+groups <- c(groups, group)
+if (j==1) {
+16
+index <- c(index, 0)
+} else {
+parent <- match(substring(ranks[[i]][j - 1], 4),
+groups)
+index <- c(index,
+parent - 1L)
+}
+level <- c(level, j)
+rank <- c(rank, taxa[j])
+}
+setTxtProgressBar(pBar, i/length(ranks))
+}
+groups <- gsub("^[ ]+", "", groups)
+groups <- gsub("[ ]+$", "", groups)
+taxid <- paste(0:(length(index) - 1L), groups, index, level, rank, sep="*")
+head(taxid, n=10)
+```
+```{r}
+writeLines(taxid,con="~/TestEuc/pr2sofia.taxid")
+```
+
