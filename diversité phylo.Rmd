@@ -1,0 +1,105 @@
+# Indice de diversité phylogenetique
+
+## Interet et choix des indices
+
+[PD applications *Faith*](https://danielpfaith.files.wordpress.com/2018/12/faith-chapter-phylogenetic-diversity-and-conservation-evaluation.pdf)  
+[Picante : Outil pour l'intégration de la phylogénie en écologie](https://doi.org/10.1093/bioinformatics/btq166)
+
+L'indice de diversité phylogénétique (PD) permet d'étudier mesurer la biodiversité en se basant sur les caractéristique des espéces, et non pas seulement sur la différence en terme d'abondance dans leurs distribution. De plus l'utilisation des information phylogénétique permettent de répondre à des problématiques écologiques, en se basant sur un contexte d'évolution. 
+
+Par exemple, Les mesures de diversité phylogénétique associées aux ASV permettent de mieux comprendre les limite de dispersion spatiale des espéces. Les indices α et β peuvent étre comparé à un modéle null par permutation afin d'observer si les espéces d'une même communautées sont phylogénétiquement proche. **Picante display null model**
+
+[Choix et comprenssion des indices de diversités](https://onlinelibrary.wiley.com/doi/epdf/10.1111/brv.12252)  
+
+**Différentes mesure de diversitée alpha:**  
+- Faith phylogenetic diversity: La somme de la longeur des branches séparants les taxon d'une communautée.  
+- Mean Pairwise Phylogenetic Distance (MPD): La moyenne de la distances entre chaque taxons.
+- Mean nearest taxon distance (MNTD):  La moyenne de la distance la plus courte entre 2 taxons.  
+MPD et MNTD sont des mesures de divergences entres les taxons.
+
+**Diversité phylogénétique beta:**   
+Permet d'obtenir une matrice de dissimilaritée utilisable pour les méthode d'ordination et multivariées tel que RDA, mantel...  
+- UniFrac distance: Calcul l'évolution unique a un site en comparant les longeurs de branches partagées.
+- MPD et MNTD entre les communautées.
+
+Ces indices peuvent se voir ajouter des paramétrer pour étre plus proche de la réalitée des variations inter-espéce. On peut par exemple prendre en compte l'abondance relative dans la mesure de la divergence phylogénique. L'importance de la distance seras alors modéré par la proportion d'abondance afin de mettre l'emphase  sur les espéces rare, ou au contraire de pondéré pour étre plus proche de la diversitée. C'est le cas de l'**abundance-weighted MPD (MPDab).**
+
+## Calcul des indices de diversités phylogénétiques β
+
+Le midroot-tree est utilisé pour le calcul de tous les indices.
+```{r}
+path <-("/home/bgroult/BacSeq")
+tree <- ape::read.tree(file.path(path,"tree.midpoint")) 
+ASV <- read.csv(file.path(path,"ASV.matrice.t.csv"), row.names = 1)
+
+library(stringr)
+colnames(ASV)<-colnames(ASV)%>%str_replace("P.", "P-")%>%
+  str_replace(".bac", "-bac")
+
+# Utilisation du package phyloseq pour calculer l'abondance relative necessaire au calcul des matrices de distance pondérée.
+```
+
+[Package picante utilisé pour le calcul des indice de diversitées phylogénétiques](http://picante.r-forge.r-project.org/picante-intro.pdf)
+
+### Faith's phylogenetic diversity 
+
+On calcul l'indice de diversitée phylogenetic de Faith à partir du mid-rooted tree. 
+```{r}
+library(picante)
+Faith <- pd(t(ASV), tree = tree, include.root=TRUE)
+head(Faith)
+```
+**PD**: Phylogenetic diversity, équivalent a la longeur total des branches des espéces présentes dans la communautée.
+**SR**: Species Richness
+
+### Phylogenique Beta diversity
+
+Attention les matrices de distances necessite une grande quantitée de mémoire pour étre calculée! Supprimer les données contenue dans l'environnemnt en cas de difficultés. `rm(<data>)`.  
+Ici les donnée crée sont immédiatement enregistrée puis l'ensemble de l'environnement suprimé afin d'augmenter la capacitée de mémoire.
+
+Calcul de la distance cophenetic, retourne une matrice de distance phylogénétique entre les ASV. Les valeurs dans la matrices correspondent a la somme de la longeur des branches séparant chaque paire d'ASV. Cette mesure est utilisée pour le calcul des autres indices.
+
+```{r}
+rm(list=ls()) #Supprime la totalitée de l'environnement.
+```
+```{bash}
+sudo rstudio-server restart #Redémarre Rstudio-server afin de vider la RAM
+```
+```{r}
+path <-("/home/bgroult/BacSeq")
+tree <- ape::read.tree(file.path(path,"tree.midpoint"))
+phydist <- cophenetic(tree)
+write.table(phydist,file.path(path,"dist.cophenetic.csv"))
+```
+
+Calcul de MPD (mean phylogenetic distance) et MPD abundance weight.
+
+**ATTENTION, Le calcul de l'abundance weighted necessite d'utiliser l'abondance relative ??ou une matrice noramlisée?? dans la matrice d'ASV**
+
+Les calcul de l'abundance weighted ne necessite pas l'utilisation de l'abondance relative. Celle si est calculé directement par la fonction `comdist`.
+
+```{r}
+path <-("/home/bgroult/BacSeq")
+phydist <- read.table(file.path(path,"dist.cophenetic.csv"), row.names = 1)
+ASV <- read.csv(file.path(path,"ASV.matrice.t.csv"), row.names = 1)
+
+MPD <- comdist(t(ASV), phydist) 
+MPDab.prop <- comdist(t(ASV.prop), phydist, abundance.weighted = TRUE)
+write.table(as.matrix(MPD),file.path(path,"B.MPD.csv"))
+write.table(as.matrix(MPDab),file.path(path,"B.MPDab.csv"))
+
+# Cluster basé sur MPD
+comdist.clusters <- hclust(comdist.result)
+plot(comdist.clusters)
+```
+
+Calcul de MNTD (Mean Nearest Taxon Distance) et MNTD abundance weight.  
+
+```{r}
+MNTD <- comdistnt(t(ASV), phydist)
+MNTDab <- comdistnt(t(ASV), phydist, abundance.weighted = TRUE)
+
+write.table(as.matrix(MNTD),file.path(path,"B.MNTD.csv"))
+write.table(as.matrix(MNTDab),file.path(path,"B.MNTDab.csv"))
+```
+
